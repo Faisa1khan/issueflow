@@ -10,14 +10,14 @@ RUN npx prisma generate
 FROM node:22-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
-COPY package.json package-lock.json ./
+RUN addgroup -S app && adduser -S app -G app
+COPY --chown=app:app package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
-COPY --from=deps /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=deps /app/node_modules/@prisma ./node_modules/@prisma
-COPY prisma ./prisma
-COPY src ./src
-COPY tsconfig.json ./
-RUN addgroup -S app && adduser -S app -G app && chown -R app:app /app
+COPY --chown=app:app --from=deps /app/node_modules/.prisma ./node_modules/.prisma
+COPY --chown=app:app --from=deps /app/node_modules/@prisma ./node_modules/@prisma
+COPY --chown=app:app prisma ./prisma
+COPY --chown=app:app src ./src
+COPY --chown=app:app tsconfig.json ./
 USER app
 EXPOSE 4000
 CMD ["sh", "-c", "npx prisma db push --skip-generate && node --import tsx src/index.ts"]
