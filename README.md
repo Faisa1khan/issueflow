@@ -1,39 +1,122 @@
 # IssueFlow
 
-A multi-tenant issue tracker API built to answer one interview question honestly: *show me a
-Node.js service you wrote, end to end.* Apollo Server 4 for the graph, Prisma over PostgreSQL for
-the data, JWT for identity, membership rows for authorization, DataLoader for the N+1 shape that
-GraphQL invites, Vitest + Supertest for the boundary tests, Docker for the run.
+[![ci](https://github.com/Faisa1khan/issueflow/actions/workflows/ci.yml/badge.svg)](https://github.com/Faisa1khan/issueflow/actions/workflows/ci.yml)
 
-**Status: local and verified. Not yet publicly deployed** — the deployment config ships in the repo
-(`Dockerfile`, `docker-compose.yml`) and the public URL is the remaining step.
+A multi-tenant issue tracker API: Apollo Server 4 on Express, GraphQL, Prisma over PostgreSQL,
+JWT access tokens with rotating refresh tokens, membership-based authorization, DataLoader
+batching, cursor pagination, rate limiting and a query-depth guard. React + Apollo Client on top,
+Vitest against a real database, Docker for the run.
 
-## Stack
+It exists to answer one interview question with code rather than adjectives: *show me a Node.js
+service you wrote, end to end.*
 
-| Layer | Choice |
+![IssueFlow board](docs/screenshots/board.png)
+
+## Architecture
+
+```mermaid
+flowchart LR
+  subgraph client [React client]
+    UI[App.tsx]
+    AC[Apollo Client<br/>auth + refresh links]
+  end
+
+  subgraph api [Node.js API]
+    RL[rate limiter<br/>Redis or memory]
+    GQL[Apollo Server 4]
+    DL[depth limit<br/>max 8]
+    CTX[context<br/>JWT to userId]
+    RES[resolvers]
+    AUTHZ[requireMembership]
+    LOAD[DataLoader<br/>authors, comment counts]
+  end
+
+  DB[(PostgreSQL 16)]
+  REDIS[(Redis)]
+
+  UI --> AC -->|POST /graphql| RL --> GQL --> DL --> CTX --> RES
+  RES --> AUTHZ --> DB
+  RES --> LOAD --> DB
+  RL -. counters .-> REDIS
+```
+
+### One request, end to end
+
+Priya files an issue:
+
+1. Apollo Client attaches the access token (`client/src/client.ts`).
+2. The rate limiter consumes one point keyed by user id, falling back to IP (`src/rateLimit.ts`).
+3. Apollo parses the document; the depth plugin rejects anything deeper than 8 before execution
+   (`src/depthLimit.ts`).
+4. The context resolves the JWT to a `userId` (`src/auth.ts`, `src/app.ts`).
+5. The resolver calls `requireMembership(ctx, workspaceId)` — the single authorization gate.
+6. Prisma writes the row. On reads, DataLoader collapses author and comment-count lookups so a
+   20-issue page costs 3 queries instead of 41.
+
+## Security model
+
+**Authentication.** Passwords are bcrypt-hashed. Access tokens are HS256 JWTs with a 15-minute
+life. Refresh tokens are 32 random bytes, stored **only as a SHA-256 hash**, and rotate on every
+use.
+
+**Reuse detection.** If a refresh token that was already rotated is presented again, the entire
+token family is revoked — the signature of a stolen token being replayed. The client sends one
+refresh at a time for the same reason (`client/src/client.ts`).
+
+**Authorization.** Roles live on `Membership(userId, workspaceId, role)`, never on `User`. Every
+workspace-scoped resolver calls `requireMembership`; there is no second read path. A test asserts
+that a non-member receives `FORBIDDEN`.
+
+**Abuse controls.** 120 requests/minute per caller with `X-RateLimit-*` headers and `429` +
+`Retry-After`. Redis makes the counter hold across replicas; the in-memory limiter is the fallback.
+Queries deeper than 8 fields are rejected with `QUERY_TOO_DEEP` before any database work.
+
+**Error contract.** `UNAUTHENTICATED`, `FORBIDDEN`, `BAD_USER_INPUT`, `CONFLICT`, `NOT_FOUND`,
+`REFRESH_EXPIRED`, `REFRESH_REUSED`, `TOO_MANY_REQUESTS`, `QUERY_TOO_DEEP`. Clients branch on the
+code; messages are for humans.
+
+## API
+
+| Query | Returns |
 |---|---|
-| API | Apollo Server 4 on Express 4, TypeScript |
-| Graph | SDL-first schema (`src/schema.graphql`), explicit field resolvers |
-| Data | PostgreSQL 16 via Prisma 6 |
-| Auth | bcrypt password hashes, HS256 JWT (7-day) |
-| Authz | `Membership(userId, workspaceId, role)` — every workspace read goes through it |
-| Batching | DataLoader for authors, comment counts and comment lists |
-| Client | React 18 + Apollo Client 3 (Vite) |
-| Tests | Vitest + Supertest against a real PostgreSQL instance |
-| Runtime | Docker (node:22-alpine, non-root, multi-stage) |
+| `me` | the current user, or `null` |
+| `workspaces` | workspaces the caller belongs to, with role and issue count |
+| `workspace(slug)` | one workspace, only if the caller is a member |
+| `issues(workspaceId, first, after, status)` | cursor-paginated connection |
+| `issue(id)` | one issue, membership-checked |
+
+| Mutation | Notes |
+|---|---|
+| `signUp`, `signIn` | return `token`, `refreshToken`, `user` |
+| `refreshSession(token)` | rotates; reuse revokes the family |
+| `signOut(token)` | revokes the family |
+| `createWorkspace(name)` | caller becomes `OWNER` |
+| `addMember(workspaceId, email, role)` | `OWNER`/`ADMIN` only |
+| `createIssue`, `setIssueStatus`, `addComment` | membership required |
+
+Full SDL: [`src/schema.graphql`](src/schema.graphql). Playground at `/graphql` when running locally.
+
+## Data model
+
+```
+User ──< Membership >── Workspace ──< Issue ──< Comment
+  └──< RefreshToken (hash, family, expiry, revokedAt)
+```
+
+Every issue belongs to one workspace. Access is a membership row, so removing it closes every
+read path at once.
 
 ## Run it
 
 ```bash
 cp .env.example .env          # set JWT_SECRET
-docker compose up --build     # postgres + api on :4000
-open http://localhost:4000/graphql
+docker compose up --build     # postgres + redis + api on :4000
 ```
 
 Client:
 
 ```bash
-cd client && npm install && npm run dev   # :5173, proxies /graphql to :4000
+cd client && npm install && npm run dev    # :5173, proxies /graphql to :4000
 ```
 
 Tests need a database:
@@ -46,59 +129,57 @@ DATABASE_URL=postgresql://issueflow:issueflow@localhost:5433/issueflow_test npx 
 npm test
 ```
 
-## Data model
+## Tests
 
-```
-User ──< Membership >── Workspace ──< Issue ──< Comment
-                                          └── author: User
-```
+15 integration tests against real PostgreSQL:
 
-Every issue belongs to exactly one workspace. A user sees a workspace only through a membership
-row; removing the row removes every read path at once, because there is no second way in.
+- auth boundary: unauthenticated query, duplicate email, sign-up/sign-in/me
+- tenancy: pagination across two pages, non-member `FORBIDDEN`, membership grant
+- comments: counts and authors through DataLoader
+- depth: fragment-aware counting, `__typename` ignored, over-limit rejected
+- rate limit: budget honoured, then `429` with `Retry-After`
+- refresh: rotation, replay kills the family, sign-out revokes, only hashes stored
 
 ## Architecture decisions
 
-**ADR-1. Membership is the authorization primitive, not a role check on the user.**
-Roles are per workspace, so a global `role` column on `User` would be wrong the moment somebody
-belongs to two teams. `requireMembership(ctx, workspaceId)` is the only gate; `MEMBER` can read and
-write issues, `OWNER`/`ADMIN` can add members. Cost: one extra query per entry point. Benefit: no
-resolver can accidentally authorize on "is logged in".
+**ADR-1. Membership is the authorization primitive.** Roles are per workspace, so a global role
+column would break the moment someone belongs to two teams. One gate, six call sites.
 
-**ADR-2. Cursor pagination on `(createdAt, id)`, not offset.**
-Offset pagination duplicates and skips rows when new issues arrive between pages, which is exactly
-what a busy tracker does. The cursor is the row id, ordered by `createdAt desc, id desc`; the query
-fetches `first + 1` rows to compute `hasNextPage` without a second count query.
+**ADR-2. Cursor pagination on `(createdAt, id)`.** Offset pagination duplicates or skips rows when
+new issues arrive between pages. `take: first + 1` computes `hasNextPage` without a count query.
 
-**ADR-3. DataLoader for authors and comment counts.**
-`issues(first: 20)` would otherwise issue 20 user queries and 20 comment counts. The loaders batch
-by request, so a page costs three queries regardless of page size. This is GraphQL's default
-failure mode and the reason the batching lives in context, not in resolvers.
+**ADR-3. DataLoader in context, not resolvers.** GraphQL's default failure mode is N+1. Batching
+per request turns a 20-issue page into 3 queries.
 
-**ADR-4. SDL-first, not code-first.**
-The schema is the contract that a client team reads; keeping it in one `.graphql` file makes the
-diff reviewable and the generated docs honest. The tradeoff is resolver type-safety by hand — the
-`tsc --noEmit` step is the guard.
+**ADR-4. SDL-first.** The schema is the contract a client team reads; one `.graphql` file keeps the
+diff reviewable. The tradeoff is hand-written resolver types, guarded by `tsc --noEmit`.
 
-**ADR-5. Errors carry codes, not prose.**
-`UNAUTHENTICATED`, `FORBIDDEN`, `BAD_USER_INPUT`, `CONFLICT`, `NOT_FOUND`. A client should branch on
-the code; the message is for humans. Plain thrown errors are mapped in `formatError` so an
-authorization failure never arrives as an opaque 500.
+**ADR-5. Refresh rotation with reuse detection.** Stateless refresh tokens cannot be revoked.
+Storing hashes with a family id makes revocation and theft detection possible, at the cost of one
+write per refresh.
 
-**ADR-6. Tests hit a real database.**
-The interesting failures here are relational (cross-tenant reads, cursor edges, unique membership),
-and mocking Prisma would hide exactly those. The suite truncates and rebuilds state, so it is
-deterministic without a transaction wrapper.
+**ADR-6. Depth limit at validation time.** A resolver-level guard still pays for parsing and can be
+bypassed by fragments. The plugin runs after document resolution and before execution.
 
-## Verified
+**ADR-7. Rate limit keyed by user, not IP.** A shared NAT should not be one bucket, and one noisy
+tenant should not spend another's budget.
 
-- `npm test` — 7 tests passing (auth boundary, duplicate email, pagination across two pages,
-  cross-tenant denial, comment counts, membership grant).
-- `npx tsc -p tsconfig.json --noEmit` — clean.
-- `docker build` — image builds; `docker compose up` — api and postgres healthy, `/healthz` 200.
+**ADR-8. Errors carry codes.** A client should branch on `FORBIDDEN`, not on prose.
 
-## Limits, stated up front
+**ADR-9. Redis optional.** The limiter degrades to in-memory when `REDIS_URL` is absent, so local
+development needs no extra service while production stays correct across replicas.
 
-- No refresh-token rotation; a 7-day JWT is the whole session story.
-- No rate limiting or query-depth limit yet. Both are on the roadmap, and a public GraphQL endpoint
-  wants them before it wants users.
-- The client is a thin proof of the API, not a product surface.
+**ADR-10. Tests hit a real database.** Cross-tenant reads, cursor edges and unique membership are
+relational failures; mocking Prisma would hide exactly those.
+
+## Deployment
+
+The image is published to GHCR on every push to `main` (`publish.yml`) and runs as a non-root user.
+`render.yaml` describes a Render web service plus managed PostgreSQL; the client deploys to Vercel.
+
+## Limits
+
+- No email verification or password reset yet.
+- Rate limiting is per instance unless `REDIS_URL` is set.
+- The React client is a proof of the API, not a product surface.
+- No subscriptions or file uploads.
