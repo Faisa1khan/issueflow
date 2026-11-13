@@ -7,7 +7,8 @@ Render (API + Postgres)  ->  Vercel (client)  ->  Render (CLIENT_ORIGIN backfill
 ```
 
 Status markers: anything not executed yet is marked **pending**. Do not change a step to "done"
-until the command next to it has actually returned the expected output.
+until the command next to it has actually returned the expected output. The live deployment was
+verified on 2026-11-13 — evidence in §7.
 
 ## 0. What exists already
 
@@ -19,7 +20,7 @@ until the command next to it has actually returned the expected output.
 - The client reads `VITE_API_URL` at build time and appends `/graphql`. Unset, it falls back to a
   relative path that only works behind the Vite dev proxy.
 
-## 1. Render — API and database  (**pending**)
+## 1. Render — API and database  (**done 2026-11-13** — `issueflow-api-um3l.onrender.com`)
 
 1. Sign in at <https://dashboard.render.com> with GitHub.
 2. **New → Blueprint**, pick `Faisa1khan/issueflow`, branch `main`. Render reads `render.yaml`.
@@ -41,7 +42,7 @@ Caveats: the free web service sleeps after ~15 minutes idle (first request after
 30–60 s), and a free Postgres instance is deleted after 30 days unless upgraded. For an interview
 demo, open the URL once beforehand so the API is warm.
 
-## 2. Vercel — client  (**pending**)
+## 2. Vercel — client  (**done 2026-11-13** — `issueflow-kohl.vercel.app`)
 
 1. <https://vercel.com/new> → Import Git Repository → `Faisa1khan/issueflow`.
 2. Framework preset: **Vite**. **Root Directory: `client`** (this is the setting people miss; the
@@ -54,14 +55,14 @@ demo, open the URL once beforehand so the API is warm.
 6. Verify: open the deployment, sign up, create a workspace, create an issue, reload the page.
    A blank page with CORS errors in the console means step 3 below has not been done yet.
 
-## 3. Backfill CORS on Render  (**pending**)
+## 3. Backfill CORS on Render  (**done 2026-11-13**)
 
 1. Render → `issueflow-api` → Environment → `CLIENT_ORIGIN`.
 2. Value: the Vercel production origin, plus any preview origin you demo from, comma-separated:
    `https://issueflow.vercel.app,https://issueflow-git-main-faisa1khan.vercel.app`
 3. Save — Render redeploys. Without this the browser blocks every call from Vercel.
 
-## 4. Smoke test the live pair  (**pending**)
+## 4. Smoke test the live pair  (**done 2026-11-13**)
 
 ```bash
 API=https://<service>.onrender.com
@@ -100,3 +101,25 @@ survive the reload (refresh-token rotation) and the list must still render.
 - Rate limiting is per instance unless `REDIS_URL` is set; the free plan runs one instance, so the
   in-memory limiter is correct there but does not survive a restart.
 - No email verification or password reset, so a demo account is created by signing up.
+
+## 7. Verification record — 2026-11-13
+
+Measured against the live pair, not inferred from the dashboard:
+
+| Check | Result |
+|---|---|
+| `GET /healthz` | `200 {"ok":true}` in 0.25s |
+| `POST /graphql` `{__typename}` | `200 {"data":{"__typename":"Query"}}` |
+| CORS preflight from the Vercel origin | `204` + `access-control-allow-origin: https://issueflow-kohl.vercel.app` |
+| Deployed bundle contains the API URL | `index-C5FSauWv.js` carries `https://issueflow-api-um3l.onrender.com` |
+| Vercel SPA deep link | `GET /nonexistent-route` → `200` (rewrite works) |
+| API flow | signUp → createWorkspace → createIssue → issues query, all `200` |
+| Refresh rotation | `refreshSession` returns a new pair; replaying the old refresh token returns `REFRESH_REUSE` |
+| Browser: sign up | account created, shell renders with the user's name |
+| Browser: file an issue | issue created and listed (`OPEN`) |
+| Browser: reload | issue still listed, session intact |
+| Browser: expired access token | request 401s → interceptor refreshes → refresh token rotates → workspace and issue re-render |
+
+Known gap found during this pass: **the UI has no workspace creation** — a new sign-up lands on
+"No workspace yet. Create one through the API, then reload." A demo visitor hits a dead end until
+that exists.

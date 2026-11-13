@@ -166,5 +166,5 @@ publish workflow already tags by SHA).
 > which is a 20-issue page in three queries instead of forty-one. Auth is a short access token plus
 > rotating refresh tokens with reuse detection: replay a rotated token and the whole family is
 > revoked. There are 20 integration tests against real Postgres, a depth limit, and a rate limiter
-> that holds across replicas when Redis is present. The image is published to GHCR; the live
-> deployment is pending and will be linked here once it is verified."
+> that holds across replicas when Redis is present. The image is published to GHCR, and the live
+> deployment is at issueflow-kohl.vercel.app against issueflow-api-um3l.onrender.com."

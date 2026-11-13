@@ -174,8 +174,15 @@ relational failures; mocking Prisma would hide exactly those.
 
 ## Deployment
 
+Live: **https://issueflow-kohl.vercel.app** (client, Vercel) → **https://issueflow-api-um3l.onrender.com**
+(API + Postgres, Render).
+
 The image is published to GHCR on every push to `main` (`publish.yml`) and runs as a non-root user.
-`render.yaml` describes a Render web service plus managed PostgreSQL; the client deploys to Vercel.
+`render.yaml` describes the Render web service plus managed PostgreSQL; the client deploys to Vercel.
+The step-by-step runbook, including env vars and smoke tests, is in `docs/DEPLOY.md`.
+
+Note: both services are on free tiers — the API sleeps after ~15 minutes idle, and the free
+Postgres instance expires after 30 days.
 
 ## Limits
 
