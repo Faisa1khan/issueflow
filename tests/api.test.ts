@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import request from "supertest";
 import type { Express } from "express";
 import { createApp } from "../src/app.js";
@@ -23,14 +23,10 @@ async function signUp(email: string) {
 }
 
 beforeAll(async () => {
-  app = await createApp();
+  app = await createApp({ rateLimit: false });
   await prisma.$executeRawUnsafe(
-    'TRUNCATE TABLE "Comment", "Issue", "Membership", "Workspace", "User" RESTART IDENTITY CASCADE',
+    'TRUNCATE TABLE "RefreshToken", "Comment", "Issue", "Membership", "Workspace", "User" RESTART IDENTITY CASCADE',
   );
-});
-
-afterAll(async () => {
-  await prisma.$disconnect();
 });
 
 describe("auth boundary", () => {

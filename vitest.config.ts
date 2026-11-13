@@ -5,6 +5,7 @@ export default defineConfig({
     environment: "node",
     // One process: the suite truncates shared tables between files.
     pool: "forks",
+    fileParallelism: false,
     poolOptions: { forks: { singleFork: true } },
     env: {
       NODE_ENV: "test",

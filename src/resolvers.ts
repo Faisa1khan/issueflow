@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import type { Context } from "./context.js";
 import { requireMembership } from "./context.js";
 import { hashPassword, signToken, verifyPassword } from "./auth.js";
+import { issueRefreshToken, revokeFamily, rotateRefreshToken } from "./tokens.js";
 
 const bad = (code: string, message: string) =>
   new GraphQLError(message, { extensions: { code } });
@@ -91,7 +92,8 @@ export const resolvers = {
         data: { email, name, passwordHash: await hashPassword(args.input.password) },
         select: { id: true, email: true, name: true },
       });
-      return { token: signToken(user.id), user };
+      const refresh = await issueRefreshToken(ctx.prisma, user.id);
+      return { token: signToken(user.id), refreshToken: refresh.token, user };
     },
 
     signIn: async (_: unknown, args: { input: { email: string; password: string } }, ctx: Context) => {
@@ -99,7 +101,37 @@ export const resolvers = {
       if (!user || !(await verifyPassword(args.input.password, user.passwordHash))) {
         throw bad("UNAUTHENTICATED", "Email or password is incorrect");
       }
-      return { token: signToken(user.id), user: { id: user.id, email: user.email, name: user.name } };
+      const refresh = await issueRefreshToken(ctx.prisma, user.id);
+      return {
+        token: signToken(user.id),
+        refreshToken: refresh.token,
+        user: { id: user.id, email: user.email, name: user.name },
+      };
+    },
+
+    /**
+     * Rotation, not renewal. The presented token is revoked and a new one is issued in the
+     * same family; presenting a revoked token again means it leaked, so the family dies.
+     */
+    refreshSession: async (_: unknown, args: { token: string }, ctx: Context) => {
+      const result = await rotateRefreshToken(ctx.prisma, args.token);
+      if (!result.ok) {
+        const code =
+          result.reason === "expired" ? "REFRESH_EXPIRED"
+          : result.reason === "reused" ? "REFRESH_REUSED"
+          : "UNAUTHENTICATED";
+        throw bad(code, "Refresh token is not valid");
+      }
+      const user = await ctx.prisma.user.findUniqueOrThrow({
+        where: { id: result.userId },
+        select: { id: true, email: true, name: true },
+      });
+      return { token: signToken(user.id), refreshToken: result.refresh.token, user };
+    },
+
+    signOut: async (_: unknown, args: { token: string }, ctx: Context) => {
+      await revokeFamily(ctx.prisma, args.token);
+      return true;
     },
 
     createWorkspace: async (_: unknown, args: { name: string }, ctx: Context) => {

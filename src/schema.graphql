@@ -60,6 +60,7 @@ type PageInfo {
 
 type AuthPayload {
   token: String!
+  refreshToken: String!
   user: User!
 }
 
@@ -92,6 +93,8 @@ type Query {
 type Mutation {
   signUp(input: SignUpInput!): AuthPayload!
   signIn(input: SignInInput!): AuthPayload!
+  refreshSession(token: String!): AuthPayload!
+  signOut(token: String!): Boolean!
   createWorkspace(name: String!): Workspace!
   addMember(workspaceId: ID!, email: String!, role: Role): Workspace!
   createIssue(input: CreateIssueInput!): Issue!

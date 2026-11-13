@@ -1,14 +1,18 @@
 import { useState } from "react";
 import { gql, useMutation, useQuery } from "@apollo/client";
-import type { IssueStatus } from "./client";
+import { session, type IssueStatus } from "./client";
 
 const ME = gql`query Me { me { id name email } }`;
 
 const SIGN_IN = gql`
-  mutation SignIn($input: SignInInput!) { signIn(input: $input) { token user { id name } } }
+  mutation SignIn($input: SignInInput!) { signIn(input: $input) { token refreshToken user { id name } } }
 `;
 const SIGN_UP = gql`
-  mutation SignUp($input: SignUpInput!) { signUp(input: $input) { token user { id name } } }
+  mutation SignUp($input: SignUpInput!) { signUp(input: $input) { token refreshToken user { id name } } }
+`;
+
+const SIGN_OUT = gql`
+  mutation SignOut($t: String!) { signOut(token: $t) }
 `;
 
 const WORKSPACES = gql`
@@ -43,9 +47,24 @@ const NEXT: Record<IssueStatus, IssueStatus> = {
 };
 
 export function App() {
-  const [token, setToken] = useState(localStorage.getItem("issueflow.token"));
+  const [token, setToken] = useState(session.access);
+  const [signOut] = useMutation(SIGN_OUT);
+
+  async function handleSignOut() {
+    const refresh = session.refresh;
+    if (refresh) {
+      try {
+        await signOut({ variables: { t: refresh } });
+      } catch {
+        // Local sign-out must succeed even if the network does not.
+      }
+    }
+    session.clear();
+    setToken(null);
+  }
+
   if (!token) return <Auth onToken={setToken} />;
-  return <Board onSignOut={() => { localStorage.removeItem("issueflow.token"); setToken(null); }} />;
+  return <Board onSignOut={handleSignOut} />;
 }
 
 function Auth({ onToken }: { onToken: (t: string) => void }) {
@@ -65,7 +84,7 @@ function Auth({ onToken }: { onToken: (t: string) => void }) {
       const res = mode === "in" ? await signIn({ variables: vars }) : await signUp({ variables: vars });
       const payload = res.data?.signIn ?? res.data?.signUp;
       if (!payload) throw new Error(res.errors?.[0]?.message ?? "Sign in failed");
-      localStorage.setItem("issueflow.token", payload.token);
+      session.set(payload.token, payload.refreshToken);
       onToken(payload.token);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sign in failed");

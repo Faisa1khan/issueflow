@@ -1,5 +1,5 @@
 import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
+import jwt, { type SignOptions } from "jsonwebtoken";
 
 const SECRET = process.env.JWT_SECRET ?? "";
 if (!SECRET) {
@@ -14,8 +14,10 @@ export type TokenClaims = { sub: string };
 export const hashPassword = (plain: string) => bcrypt.hash(plain, 10);
 export const verifyPassword = (plain: string, hash: string) => bcrypt.compare(plain, hash);
 
+const ACCESS_TTL = process.env.ACCESS_TOKEN_TTL ?? "15m";
+
 export function signToken(userId: string): string {
-  return jwt.sign({ sub: userId }, secret(), { expiresIn: "7d" });
+  return jwt.sign({ sub: userId }, secret(), { expiresIn: ACCESS_TTL as SignOptions["expiresIn"] });
 }
 
 export function readToken(header?: string | null): string | null {
