@@ -1,0 +1,100 @@
+enum Role {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum IssueStatus {
+  OPEN
+  IN_PROGRESS
+  DONE
+}
+
+type User {
+  id: ID!
+  email: String!
+  name: String!
+}
+
+type Workspace {
+  id: ID!
+  name: String!
+  slug: String!
+  role: Role!
+  issueCount(status: IssueStatus): Int!
+}
+
+type Issue {
+  id: ID!
+  title: String!
+  body: String!
+  status: IssueStatus!
+  priority: Int!
+  createdAt: String!
+  author: User!
+  commentCount: Int!
+  comments: [Comment!]!
+}
+
+type Comment {
+  id: ID!
+  body: String!
+  createdAt: String!
+  author: User!
+}
+
+type IssueEdge {
+  cursor: String!
+  node: Issue!
+}
+
+type IssueConnection {
+  edges: [IssueEdge!]!
+  pageInfo: PageInfo!
+}
+
+type PageInfo {
+  hasNextPage: Boolean!
+  endCursor: String
+}
+
+type AuthPayload {
+  token: String!
+  user: User!
+}
+
+input SignUpInput {
+  email: String!
+  name: String!
+  password: String!
+}
+
+input SignInInput {
+  email: String!
+  password: String!
+}
+
+input CreateIssueInput {
+  workspaceId: ID!
+  title: String!
+  body: String!
+  priority: Int
+}
+
+type Query {
+  me: User
+  workspace(slug: String!): Workspace
+  workspaces: [Workspace!]!
+  issues(workspaceId: ID!, first: Int = 20, after: String, status: IssueStatus): IssueConnection!
+  issue(id: ID!): Issue
+}
+
+type Mutation {
+  signUp(input: SignUpInput!): AuthPayload!
+  signIn(input: SignInInput!): AuthPayload!
+  createWorkspace(name: String!): Workspace!
+  addMember(workspaceId: ID!, email: String!, role: Role): Workspace!
+  createIssue(input: CreateIssueInput!): Issue!
+  setIssueStatus(id: ID!, status: IssueStatus!): Issue!
+  addComment(issueId: ID!, body: String!): Comment!
+}
