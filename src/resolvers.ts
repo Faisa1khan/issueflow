@@ -153,10 +153,42 @@ export const resolvers = {
       if (role === "MEMBER") throw bad("FORBIDDEN", "Only owners and admins can add members");
       const user = await ctx.prisma.user.findUnique({ where: { email: emailOf(args.email) } });
       if (!user) throw bad("NOT_FOUND", "No account with that email. Ask them to sign up first.");
+
+      const existingMembership = await ctx.prisma.membership.findUnique({
+        where: { userId_workspaceId: { userId: user.id, workspaceId: args.workspaceId } },
+      });
+
+      const newRole = args.role ?? "MEMBER";
+
+      if (newRole === "OWNER" && role !== "OWNER") {
+        throw bad("FORBIDDEN", "Only an owner may grant the OWNER role");
+      }
+
+      if (existingMembership?.role === "OWNER" && role !== "OWNER") {
+        throw bad("FORBIDDEN", "Only an owner may change an existing owner");
+      }
+
+      if (role === "ADMIN" && existingMembership?.role === "ADMIN") {
+        throw bad("FORBIDDEN", "Admins may not modify other admins");
+      }
+
+      if (existingMembership?.role === "OWNER" && newRole !== "OWNER") {
+        const ownerCount = await ctx.prisma.membership.count({
+          where: { workspaceId: args.workspaceId, role: "OWNER" },
+        });
+        if (ownerCount <= 1) {
+          throw bad("BAD_USER_INPUT", "The last owner cannot be demoted");
+        }
+      }
+
+      if (ctx.userId === user.id) {
+        throw bad("FORBIDDEN", "Cannot modify your own membership through addMember");
+      }
+
       await ctx.prisma.membership.upsert({
         where: { userId_workspaceId: { userId: user.id, workspaceId: args.workspaceId } },
-        create: { userId: user.id, workspaceId: args.workspaceId, role: args.role ?? "MEMBER" },
-        update: { role: args.role ?? "MEMBER" },
+        create: { userId: user.id, workspaceId: args.workspaceId, role: newRole },
+        update: { role: newRole },
       });
       const workspace = await ctx.prisma.workspace.findUniqueOrThrow({ where: { id: args.workspaceId } });
       return { ...workspace, role };

@@ -5,6 +5,7 @@ import { createApp } from "../src/app.js";
 import { prisma } from "../src/db.js";
 import { documentDepth } from "../src/depthLimit.js";
 import { parse } from "graphql";
+import { rotateRefreshToken } from "../src/tokens.js";
 
 const SIGN_UP = `mutation($input: SignUpInput!) { signUp(input: $input) { token refreshToken user { id } } }`;
 const REFRESH = `mutation($t: String!) { refreshSession(token: $t) { token refreshToken user { id } } }`;
@@ -104,5 +105,24 @@ describe("refresh token rotation", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].tokenHash).not.toBe(session.refreshToken);
     expect(rows[0].tokenHash).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("handles concurrent rotations on the same raw token atomically", async () => {
+    const session = await signUp("race@example.com");
+    const [res1, res2] = await Promise.all([
+      rotateRefreshToken(prisma, session.refreshToken),
+      rotateRefreshToken(prisma, session.refreshToken),
+    ]);
+
+    const successes = [res1, res2].filter((r) => r.ok);
+    const reused = [res1, res2].filter((r) => !r.ok && r.reason === "reused");
+    expect(successes).toHaveLength(1);
+    expect(reused).toHaveLength(1);
+
+    const successfulChild = successes[0] as { ok: true; refresh: { familyId: string } };
+    const nonRevokedTokens = await prisma.refreshToken.findMany({
+      where: { familyId: successfulChild.refresh.familyId, revokedAt: null },
+    });
+    expect(nonRevokedTokens).toHaveLength(1);
   });
 });

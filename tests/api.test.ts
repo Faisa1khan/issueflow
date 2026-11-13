@@ -150,4 +150,90 @@ describe("multi-tenant isolation", () => {
     });
     expect(after.body.data.workspace.id).toBe(workspaceId);
   });
+
+  describe("addMember boundary rules", () => {
+    const ADD_MEMBER = `
+      mutation($id: ID!, $email: String!, $role: Role) {
+        addMember(workspaceId: $id, email: $email, role: $role) { id }
+      }
+    `;
+
+    it("enforces that only an OWNER may grant OWNER", async () => {
+      const owner = await signUp("owner-grant@example.com");
+      const admin = await signUp("admin-grant@example.com");
+      const user = await signUp("user-grant@example.com");
+      const ws = await gql(`mutation { createWorkspace(name: "GrantRole") { id } }`, { token: owner });
+      const workspaceId = ws.body.data.createWorkspace.id as string;
+
+      await gql(ADD_MEMBER, { token: owner, variables: { id: workspaceId, email: "admin-grant@example.com", role: "ADMIN" } });
+
+      const adminAttempt = await gql(ADD_MEMBER, {
+        token: admin,
+        variables: { id: workspaceId, email: "user-grant@example.com", role: "OWNER" },
+      });
+      expect(adminAttempt.body.errors?.[0]?.extensions?.code).toBe("FORBIDDEN");
+
+      const ownerAttempt = await gql(ADD_MEMBER, {
+        token: owner,
+        variables: { id: workspaceId, email: "user-grant@example.com", role: "OWNER" },
+      });
+      expect(ownerAttempt.body.errors).toBeUndefined();
+    });
+
+    it("enforces that an ADMIN cannot modify another ADMIN or an OWNER", async () => {
+      const owner = await signUp("owner-boundary@example.com");
+      const admin1 = await signUp("admin1-boundary@example.com");
+      const admin2 = await signUp("admin2-boundary@example.com");
+      const ws = await gql(`mutation { createWorkspace(name: "AdminRules") { id } }`, { token: owner });
+      const workspaceId = ws.body.data.createWorkspace.id as string;
+
+      await gql(ADD_MEMBER, { token: owner, variables: { id: workspaceId, email: "admin1-boundary@example.com", role: "ADMIN" } });
+      await gql(ADD_MEMBER, { token: owner, variables: { id: workspaceId, email: "admin2-boundary@example.com", role: "ADMIN" } });
+
+      const modifyAdmin = await gql(ADD_MEMBER, {
+        token: admin1,
+        variables: { id: workspaceId, email: "admin2-boundary@example.com", role: "MEMBER" },
+      });
+      expect(modifyAdmin.body.errors?.[0]?.extensions?.code).toBe("FORBIDDEN");
+
+      const modifyOwner = await gql(ADD_MEMBER, {
+        token: admin1,
+        variables: { id: workspaceId, email: "owner-boundary@example.com", role: "ADMIN" },
+      });
+      expect(modifyOwner.body.errors?.[0]?.extensions?.code).toBe("FORBIDDEN");
+    });
+
+    it("enforces that nobody may change their own membership through addMember", async () => {
+      const owner = await signUp("owner-self@example.com");
+      const admin = await signUp("admin-self@example.com");
+      const ws = await gql(`mutation { createWorkspace(name: "SelfRules") { id } }`, { token: owner });
+      const workspaceId = ws.body.data.createWorkspace.id as string;
+
+      await gql(ADD_MEMBER, { token: owner, variables: { id: workspaceId, email: "admin-self@example.com", role: "ADMIN" } });
+
+      const ownerSelf = await gql(ADD_MEMBER, {
+        token: owner,
+        variables: { id: workspaceId, email: "owner-self@example.com", role: "OWNER" },
+      });
+      expect(ownerSelf.body.errors?.[0]?.extensions?.code).toBe("FORBIDDEN");
+
+      const adminSelf = await gql(ADD_MEMBER, {
+        token: admin,
+        variables: { id: workspaceId, email: "admin-self@example.com", role: "MEMBER" },
+      });
+      expect(adminSelf.body.errors?.[0]?.extensions?.code).toBe("FORBIDDEN");
+    });
+
+    it("enforces that the last OWNER cannot be demoted", async () => {
+      const owner = await signUp("owner-last@example.com");
+      const ws = await gql(`mutation { createWorkspace(name: "LastOwner") { id } }`, { token: owner });
+      const workspaceId = ws.body.data.createWorkspace.id as string;
+
+      const demoteAttempt = await gql(ADD_MEMBER, {
+        token: owner,
+        variables: { id: workspaceId, email: "owner-last@example.com", role: "MEMBER" },
+      });
+      expect(demoteAttempt.body.errors?.[0]?.extensions?.code).toBe("BAD_USER_INPUT");
+    });
+  });
 });

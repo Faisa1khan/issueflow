@@ -11,6 +11,8 @@ import { onError } from "@apollo/client/link/error";
 
 export type IssueStatus = "OPEN" | "IN_PROGRESS" | "DONE";
 
+const API_URL = import.meta.env.VITE_API_URL ?? "";
+
 const ACCESS_KEY = "issueflow.token";
 const REFRESH_KEY = "issueflow.refresh";
 const REFRESH_MUTATION = `mutation Refresh($t: String!) { refreshSession(token: $t) { token refreshToken } }`;
@@ -45,7 +47,7 @@ async function refreshSession(): Promise<boolean> {
   if (!inFlight) {
     inFlight = (async () => {
       try {
-        const res = await fetch("/graphql", {
+        const res = await fetch(API_URL + "/graphql", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ query: REFRESH_MUTATION, variables: { t: token } }),
@@ -93,12 +95,10 @@ const authLink = new ApolloLink((operation, forward) => {
 });
 
 export const client = new ApolloClient({
-  link: from([errorLink, concat(authLink, new HttpLink({ uri: "/graphql" }))]),
+  link: from([errorLink, concat(authLink, new HttpLink({ uri: API_URL + "/graphql" }))]),
   cache: new InMemoryCache({
     typePolicies: {
       Query: { fields: { issues: { merge: false } } },
     },
   }),
 });
-
-export type IssueStatus = "OPEN" | "IN_PROGRESS" | "DONE";

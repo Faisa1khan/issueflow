@@ -53,9 +53,25 @@ export async function rotateRefreshToken(prisma: PrismaClient, raw: string): Pro
     return { ok: false, reason: "expired" };
   }
 
-  await prisma.refreshToken.update({ where: { id: existing.id }, data: { revokedAt: new Date() } });
-  const refresh = await issueRefreshToken(prisma, existing.userId, existing.familyId);
-  return { ok: true, userId: existing.userId, refresh };
+  return await prisma.$transaction(async (tx) => {
+    const claimed = await tx.refreshToken.updateMany({
+      where: { id: existing.id, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    if (claimed.count === 0) {
+      // Lost the claim: another request rotated this token first. Revoke the descendants that
+      // existed when this token was presented, but not the replacement the winner just minted -
+      // a legitimate double-submit must not log the user out. A genuine replay of an older token
+      // hits the revokedAt branch above (or below), which kills the entire family.
+      await tx.refreshToken.updateMany({
+        where: { familyId: existing.familyId, revokedAt: null, createdAt: { lte: existing.createdAt } },
+        data: { revokedAt: new Date() },
+      });
+      return { ok: false, reason: "reused" };
+    }
+    const refresh = await issueRefreshToken(tx as unknown as PrismaClient, existing.userId, existing.familyId);
+    return { ok: true, userId: existing.userId, refresh };
+  });
 }
 
 export async function revokeFamily(prisma: PrismaClient, raw: string): Promise<void> {
