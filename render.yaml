@@ -22,6 +22,17 @@ services:
         value: "120"
       - key: NODE_ENV
         value: production
+      # Set after the Vercel client has a URL: the browser origin allowed to call this API.
+      # Comma-separated for preview + production. Without it, CORS falls back to localhost.
+      - key: CLIENT_ORIGIN
+        sync: false
+      # Optional. Without it the rate limiter is per-instance memory, not a shared counter.
+      # Render exposes Redis as a separate service; paste its internal URL here.
+      - key: REDIS_URL
+        sync: false
+      # Render terminates TLS and forwards exactly one hop.
+      - key: TRUST_PROXY
+        value: "1"
 
 databases:
   - name: issueflow-db

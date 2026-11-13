@@ -165,6 +165,6 @@ publish workflow already tags by SHA).
 > `(createdAt, id)` because offset breaks under writes. N+1 is handled with per-request DataLoaders,
 > which is a 20-issue page in three queries instead of forty-one. Auth is a short access token plus
 > rotating refresh tokens with reuse detection: replay a rotated token and the whole family is
-> revoked. There are 15 integration tests against real Postgres, a depth limit, and a rate limiter
-> that holds across replicas when Redis is present. It is deployed and the image is published to
-> GHCR."
+> revoked. There are 20 integration tests against real Postgres, a depth limit, and a rate limiter
+> that holds across replicas when Redis is present. The image is published to GHCR; the live
+> deployment is pending and will be linked here once it is verified."
